@@ -9,10 +9,11 @@ use POSIX qw/strftime/;
 
 # connect to database
 my $dbh = DBI->connect("DBI:Pg:dbname=sitrepdev;host=localhost", "sitrepadmin", "", {'RaiseError' => 1});
-#my $dbh = DBI->connect("DBI:Pg:dbname=sr_data;host=localhost", "alexkorb", "secret", {'RaiseError' => 1});
 
 #start with a random CFS
 @jobarray=("");
+
+
 my $precinct=selectPrecinct();
 $jobarray[0] = new Job(getHighestID()+1, $precinct);
 $idnum = $jobarray[0]->getID;
@@ -136,35 +137,34 @@ while(1){
 
 	} else {
 		
-		#for( ?.
 
 		$jobsinarow++;
 		$idnum++;
 		
-		push @jobarray, new Job($idnum);
+#		push @jobarray, new Job($idnum);
 		#$idnum = $jobarray[@jobIDs]->getID;
-		$update = $jobarray[@jobIDs]->getUpdate();
-		my $address = $jobarray[@jobIDs]->getAddress();
+#		$update = $jobarray[@jobIDs]->getUpdate();
+#		my $address = $jobarray[@jobIDs]->getAddress();
 		
 		#get data from jobarray before pushing new job, just so the index is right, otherwise it would be off by 1
-		push(@jobIDs, "$idnum");
-		push(@jobupdatewaits, int(rand(3))+1);
+#		push(@jobIDs, "$idnum");
+#		push(@jobupdatewaits, int(rand(3))+1);
 		
-		my $precinct=selectPrecinct();
-		$code=int(rand(88)+11);
+#		my $precinct=selectPrecinct();
+#		$code=int(rand(88)+11);
 		
-							my $startime=strftime('%H:%M:%S', localtime);
-	
+#							my $startime=strftime('%H:%M:%S', localtime);
+#	
 		#Create random location
-		$cfspoint=createRandomLocation($precinct, $dbh);
+#		$cfspoint=createRandomLocation($precinct, $dbh);
 					
 		#insert some location
-		$insertlocations2 = "insert into location (source, has_data, data ,geometry) values(6, 't', hstore(ARRAY[['type','CFSDemo']]), St_Force_3D(St_GeomFromText( '$cfspoint', 4326) )   ) returning id";
+#		$insertlocations2 = "insert into location (source, has_data, data ,geometry) values(6, 't', hstore(ARRAY[['type','CFSDemo']]), St_Force_3D(St_GeomFromText( '$cfspoint', 4326) )   ) returning id";
 		#print "$insertlocations2\n";
-		$insertlocations2_handle = $dbh->prepare($insertlocations2);
-		$insertlocations2_handle->execute();
+#		$insertlocations2_handle = $dbh->prepare($insertlocations2);
+#		$insertlocations2_handle->execute();
 		#get the returned id
-		$locationid2 = $insertlocations2_handle->fetch()->[0];
+#		$locationid2 = $insertlocations2_handle->fetch()->[0];
 		
 		#my $rows = $dbh->do("INSERT INTO event (group_id, location, data) VALUES (999, $locationid2, hstore(ARRAY[['cfs_type','Fire'], ['cfs_letter','K'], ['cfs_num','$idnum'], ['cfs_pct','$precinct'], 
 		#		['cfs_sector','B'], ['cfs_code','$code'], ['cfs_addr','$address'], ['cfs_body','$update'], ['cfs_finaldis','']]))");
@@ -214,8 +214,20 @@ sub jobtype {
 
 sub InsertNewEvent(){
 
-	#NOT FINISHED
+		push @jobarray, new Job($idnum);
+		$update = $jobarray[@jobIDs]->getUpdate();
+		my $address = $jobarray[@jobIDs]->getAddress();
+		
+		#get data from jobarray before pushing new job, just so the index is right, otherwise it would be off by 1
+		push(@jobIDs, "$idnum");
+		push(@jobupdatewaits, int(rand(3))+1);
+		
+		$code=int(rand(88)+11);
+		
+		my $startime=strftime('%H:%M:%S', localtime);
+	
 		#Create random location
+		$precinct=selectPrecinct();
 		
 		$cfspoint=createRandomLocation($precinct, $dbh);
 					
