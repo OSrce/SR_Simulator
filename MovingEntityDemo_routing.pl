@@ -12,6 +12,8 @@ my $srdb = DBI->connect("DBI:Pg:dbname=sitrepdev;host=localhost", "sitrepadmin",
 
 my $rows = $srdb->do("DELETE FROM entity_status where id in (SELECT es.id as id from entity_status es, entity e where es.entity=e.id AND (e.group_id=2014 OR e.group_id=0))" );
 
+$count=0;
+$current=0;
 
 	@entity_list;
 	@route_list;
@@ -36,7 +38,10 @@ my $rows = $srdb->do("DELETE FROM entity_status where id in (SELECT es.id as id 
 		
 		push @entity_list, $entityid;
 		#random direction and speed
+		#my $speed = (100 - int(rand(50)))/5000;
 		my $speed = (100 - int(rand(50)))/5000;
+		
+		
 		#if(rand()>0.5) {
 		#	$speed = $speed *-1;
 		#}
@@ -55,8 +60,6 @@ my $rows = $srdb->do("DELETE FROM entity_status where id in (SELECT es.id as id 
 		
 		##$insertlocations = "insert into location (source, data ,geometry) select 6, hstore(ARRAY[['type','fire truck']]), st_line_interpolate_point(geometry, $pct_along_route_list[$i]) from srmap where id=$route_list[$i] returning id, st_x(geometry), st_y(geometry)  ";
 		
-		
-	#	print "$insertlocations\n";
 		$insertlocations_handle = $srdb->prepare($insertlocations);
 		$insertlocations_handle->execute();
 		#get the returned id
@@ -72,10 +75,9 @@ my $rows = $srdb->do("DELETE FROM entity_status where id in (SELECT es.id as id 
 		#update entity status
 	
 		#Insert a baseline status 
-		my $rows = $srdb->do("insert into entity_status (entity, data, data_begin) values ($entity_list[$i], hstore(ARRAY[['inservice','t'],['assigned','f'],['event_id',''], ['onscene','f'], ['enroute','f']]), now() )");
+		my $rows = $srdb->do("insert into entity_status (entity, data, data_begin) values ($entity_list[$i], hstore(ARRAY[['inservice','t'],['assigned','f'], ['onscene','f'], ['enroute','f']]), now() )");
 	
 		$insertstatus = "insert into entity_status (entity, location, data, data_begin) values ($entity_list[$i], $locid, hstore(ARRAY[['heading','$heading'], ['routeid','']]), now() ) returning id, entity";
-	#	print "insertstatus is $insertstatus\n";
 
 		$insertstatus_handle = $srdb->prepare($insertstatus);
 		$insertstatus_handle->execute();
@@ -113,29 +115,47 @@ my $rows = $srdb->do("DELETE FROM entity_status where id in (SELECT es.id as id 
 		for ($i = 0; $i < $num_entities; $i++) {
 			
 			$routeid = "";
+			$eventid = "";
 			
 			#Every entity should have a route in SRmap ... or if there is no route, then that means it should stay where it is.
 			$routequery = "select id from srmap where group_id=2015 AND data @> '\"entity\"=>\"$entity_list[$i]\"' limit 1";
+		#	print "$routequery\n";
 			$routequery_handle = $srdb->prepare($routequery);
 			$routequery_handle->execute();
 			$routequery_handle->bind_columns(undef, \$routeid);
 			$routequery_handle->fetch();
 
+			
+
+			#If the route is not null, and it's different from the previous route for this entity then make it visible
 			if( ($routeid != "") && ( $route_list[$i]!= $routeid) ){
 			
-				print "Found new route for $entity_list[$i] along route $routeid \n";
+				$count++;
+				$current++;
+				print "Event # $count ... Currently $current ... Found new route for $entity_list[$i] along route $routeid \n";
 				$route_list[$i] = $routeid;
-				
+				$pct_along_route_list[$i]=0;
 
 				#Once it's routed then 				
 				my $rows = $srdb->do("UPDATE entity set group_id=2014 where id=$entity_list[$i]" );
 					#maybe if the route changes it should restart pct_along_route_list[$i] to 0
+					
+				#find the eventid for this entity	
+					$closequery = "UPDATE entity_status set data_end=now() where entity=$entity_list[$i] and has_end='f' and data @> '\"enroute\"=>\"f\"' returning data -> 'event_id'";
+					$closequery_handle = $srdb->prepare($closequery);
+					$closequery_handle->execute();
+					$closequery_handle->bind_columns(undef, \$eventid);
+					$closequery_handle->fetch();
+				
+				#Insert the status that the entity is now en route	
+				my $rows = $srdb->do("insert into entity_status (entity, data) values ($entity_list[$i], hstore(ARRAY[['event_id','$eventid'], ['inservice','t'], ['assigned','t'], ['enroute','t'], ['onscene','f']]) )");
+	
 			}		
 			
 			
 			#If there is a route, then calculate the pct along the route
 			if($route_list[$i]!=""){
-				
+				#print "Route for $entity_list[$i] to $eventid is $route_list[$i]\n";
 				if($pct_along_route_list[$i] !=-1){
 					$pct_along_route_list[$i] = $pct_along_route_list[$i] + $velocity_list[$i];
 				}
@@ -143,7 +163,8 @@ my $rows = $srdb->do("DELETE FROM entity_status where id in (SELECT es.id as id 
 				#if they reach the end of their route, then set onscene=true
 				if($pct_along_route_list[$i] >= 1){
 					
-					print "#############$entity_list[$i] has reached it's destination!! Hallelujah! \n";
+					print "#############$entity_list[$i] has reached it's destination!! Hallelujah! Currently $current\n";
+					$current--;
 					
 					$pct_along_route_list[$i] = 1;
 					#update the table so that "onscene" is true
@@ -161,24 +182,21 @@ my $rows = $srdb->do("DELETE FROM entity_status where id in (SELECT es.id as id 
 					$eventquery_handle->bind_columns(undef, \$eventid);
 					$eventquery_handle->fetch();
 					
+
 					print "    						Entity $entity_list[$i] is on scene at $eventid \n";
 				
 					
 					#Shouldn't event id be set somewhere in this loop?
 					#insert new status "on scene"
-					my $rows = $srdb->do("insert into entity_status (entity, data, data_begin) values ($entity_list[$i], hstore(ARRAY[['event_id','$eventid'], ['onscene','t'], ['enroute','f']]), now() )");
-					
-					#take the entity off the mape, and unassign it the event (in reality it should route back to the station
-					#this should probably include the entityid not the eventid or maybe include both
-					my $rows = $srdb->do("update entity_status set data_end=now() where data @> '\"event_id\"=>\"$eventid\"' AND data @> '\"onscene\"=>\"t\"' AND has_end='f'");
-					
-					my $rows = $srdb->do("update entity set group_id=0 where id=$entity_list[$i]");
-					
-					
+					my $rows = $srdb->do("insert into entity_status (entity, data, data_begin) values ($entity_list[$i], hstore(ARRAY[['event_id','$eventid'], ['inservice','t'], ['assigned','t'], ['onscene','t'], ['enroute','f']]), now() )");
+
 					#TODO Delete the route so that entity position stops being updated. Should I do that here or in RoutingEntitiesToEvents.pl??
 					
 					#$velocity_list[$i] = $velocity_list[$i]*-1;
 					#$pct_along_route_list[$i] = $pct_along_route_list[$i] + 2*$velocity_list[$i];	
+				
+					#After the final location has been updated, then set the pct to -1, just so it does not keep updating
+					$pct_along_route_list[$i]=-1;
 				
 				}
 
@@ -193,7 +211,7 @@ my $rows = $srdb->do("DELETE FROM entity_status where id in (SELECT es.id as id 
 									
 					#Create new location
 					$insertlocations = "insert into location (source, data ,geometry) select 6, hstore(ARRAY[['type','fire truck']]), st_line_interpolate_point(geometry, $pct_along_route_list[$i]) from srmap where id=$route_list[$i] returning id, st_x(geometry), st_y(geometry)";
-					print "$insertlocations\n";
+					#print "$insertlocations\n";
 				
 					$insertlocations_handle = $srdb->prepare($insertlocations);
 					$insertlocations_handle->execute();
@@ -201,11 +219,6 @@ my $rows = $srdb->do("DELETE FROM entity_status where id in (SELECT es.id as id 
 					$insertlocations_handle->bind_columns(undef, \$locid, \$x, \$y);
 					$insertlocations_handle->fetch();
 	
-					#After the final location has been updated, then set the pct to -1, just so it does not keep updating (as per if statement about 40 lines up)
-					if($pct_along_route_list[$i] == 1){
-						$pct_along_route_list[$i]=-1;
-					}
-					
 					#To get this facing north I need to invert it and rotate it by 90.
 					$heading = 90 + (-atan2($y - $y_list[$i], $x - $x_list[$i]) * 360/(2*3.14159));
 					if($heading<0){
@@ -225,7 +238,7 @@ my $rows = $srdb->do("DELETE FROM entity_status where id in (SELECT es.id as id 
 						#print "Updating entity $entity_list[$i] \n";
 					
 						#update the old status
-						my $rows = $srdb->do("UPDATE entity_status set data_end=now() where entity=$entity_list[$i] and has_end='f'" );
+						my $rows = $srdb->do("UPDATE entity_status set data_end=now() where entity=$entity_list[$i] AND data ? 'heading' AND data ? 'routeid' AND has_end='f'" );
 					
 						#insert new status
 						$insertstatus = "insert into entity_status (entity, location, data, data_begin) values ($entity_list[$i], $locid, hstore(ARRAY[['heading','$heading'], ['routeid','$routeid']]), now() ) returning id";
@@ -235,9 +248,8 @@ my $rows = $srdb->do("DELETE FROM entity_status where id in (SELECT es.id as id 
 						$statusid = $insertstatus_handle->fetch()->[0];
 						#keep updating their locations				
 					}
-				}	
+				}						
 			}
-			
 		}
 	}
 

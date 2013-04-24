@@ -2,7 +2,7 @@
 
 # load module
 use DBI;
-use Job_General;
+use Job_routing;
 use POSIX qw/strftime/;
 
 
@@ -25,7 +25,7 @@ my @cfsTypeArr = ("Fire","Medical", "Fire");
 #for pseudorandomness to make sure not too many jobs are created in a row
 my $jobsinarow=1;
 
-my $joblimit=10; #limit the total number of jobs in the simulation
+my $joblimit=15; #limit the total number of jobs in the simulation
 my $MaxTimeTilNextUpdate=50; #each job will be updated between 1 and 1 + MaxTimeTilNextUpdate seconds
 my $updatechance=0.85; #likelihood of updating an existing CFS vs starting a new CFS
 my $numjobs=1;
@@ -48,52 +48,48 @@ while(1){
 		#loop through all the jobs and see if they should be updated
 		for ($i = 0; $i < $numjobs; $i++) {
 			$jobupdatewaits[$i]--;
+			$tmpidnum = $jobarray[$i]->getID;
  			if($jobupdatewaits[$i]<1){
 				$jobsinarow=0;
 				#increase the counter for number of updates on a particular job
-				$updatecounts[$i]++;
-				my $tmpidnum = $jobarray[$i]->getID;
-				my $tmpupdate = $jobarray[$i]->getUpdate();
-				print "Update $updatecounts[$i] for job $jobIDs[$i]: $tmpupdate\n";
-				
-				my $rows = $dbh->do("UPDATE event set data = data || hstore('cfs_body', data->'cfs_body' || '$tmpupdate') where data @> '\"cfs_num\"=>\"$tmpidnum\"'");
-								
-				#determine a time when this job will be updated next
-				
-				$jobupdatewaits[$i] = int(rand($MaxTimeTilNextUpdate)) + 1;
-
-				#maybe change this to asking the job if it's done
-				
-				#my $rows = $dbh->do("UPDATE event set data = data || hstore('cfs_body', data->'cfs_body' || '$tmpupdate') where data @> '\"cfs_num\"=>\"$tmpidnum\"'");
-				
-			
-				#select data -> 'event_id' from entity_status where has_end='f';
-				#$entityquery = "select es.entity from event ev, entity_status es, location l, (select geometry from location, event where event.id=$eventid AND event.location=location.id) l2  where ev.id=$eventid AND es.location=l.id AND es.has_end='f' AND es.data @> '\"assigned\"=>\"f\"' AND es.data @> '\"inservice\"=>\"t\"' order by st_distance(l.geometry, l2.geometry) limit 1";								  
-				#$entityquery_handle = $dbh->prepare($entityquery);
-				#$entityquery_handle->execute();
-				#$entityquery_handle->bind_columns(undef, \$entityid, \$distancetoevent, \$entitylocation, \$eventlocation);
-				#$entityquery_handle->fetch();	
-				
-				if($updatecounts[$i]>6){
-					#then close the job	
-					print "Job #$tmpidnum is closing.\n";
-					#add final disposition, time etc.	
-					my $finaldis=int(rand(8)) +91;
-					my $finaldisdate=strftime('%Y-%m-%d %H:%M:%S', localtime);
+				if($updatecounts[$i]<=4){
+					$updatecounts[$i]++;
 					
-					my $rows = $dbh->do("UPDATE event set data_end=now(), data = data || '\"cfs_finaldis\"=>\"$finaldis\"'::hstore where data @> '\"cfs_num\"=>\"$tmpidnum\"'");
-
+					my $tmpupdate = $jobarray[$i]->getUpdate();
+					print "Update $updatecounts[$i] for job $jobIDs[$i]: $tmpupdate\n";
 					
-					#replace the job with a new job
-					$idnum++;
+					my $rows = $dbh->do("UPDATE event set data = data || hstore('cfs_body', data->'cfs_body' || '$tmpupdate') where data @> '\"cfs_num\"=>\"$tmpidnum\"'");
+									
+					#determine a time when this job will be updated next
+				
 					$jobupdatewaits[$i] = int(rand($MaxTimeTilNextUpdate)) + 1;
-					$updatecounts[$i]=0;
-					my $rows=InsertNewEvent($i);
-				}
 
+					#maybe change this to asking the job if it's done
+					
+				} 
 			}	
- 		}
+ 		
+			#This just checks if the finaldis has been set and the event has been ended
+			#my $rows = $dbh->do("update event set data_end=data_end where data @> '\"cfs_num\"=>\"$tmpidnum\"' AND data->'cfs_finaldis' !=''");						  
+			
+			
+			$eventid="";
+			#Find out if the unit is enroute or on scene or not
+			$endquery = "select id from event where data @> '\"cfs_num\"=>\"$tmpidnum\"' AND data->'cfs_finaldis' !='' AND has_end='t' limit 1";											  
+			$endquery_handle = $dbh->prepare($endquery);
+			$endquery_handle->execute();
+			$endquery_handle->bind_columns(undef, \$eventid);
+			$endquery_handle->fetch();
 
+			if($eventid ne ""){
+				print "Ending event $eventid\n";
+				#replace the job with a new job
+				$idnum++;
+				$jobupdatewaits[$i] = int(rand($MaxTimeTilNextUpdate)) + 1;
+				$updatecounts[$i]=0;
+				my $rows=InsertNewEvent($i);
+			}
+ 		}
 	} else {
 		
 		$jobsinarow++;
@@ -130,7 +126,9 @@ sub updateCFS {
 
 sub selectPrecinct {
 
-	my @pctArr = (1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36);
+	#The numbers from LA come from the LA city planning website for Community Planning Areas (not city council districts)
+	#14 was removed from the list because it kept giving routing errors. It's the area around LAX ... and also 3 apparently
+	my @pctArr = (1,2,4,5,6,7,8,9,10,11,12,13,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36);
 	return $pctArr[ int(rand(35) )] ;
 }
 

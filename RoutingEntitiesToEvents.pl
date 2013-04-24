@@ -1,5 +1,8 @@
 #!/usr/bin/perl
 
+#TODO Make this update the event with whether or not the entity has responded. The event shouldn't end otherwise
+#The event should also update itself with random updates
+
 # load module
 use DBI;
 use POSIX qw/strftime/;
@@ -21,7 +24,7 @@ while(1){
 	#Find all the events ...
 		#Select all the route
 	$eventquery = "SELECT id FROM event where has_end='f'";
-		   	 print "$eventquery \n";
+		   	 #print "$eventquery \n";
 		   	                          
 	$eventquery_handle = $srdb->prepare($eventquery);
 	$eventquery_handle->execute();
@@ -31,13 +34,13 @@ while(1){
 	#loop through the events
 	while($eventquery_handle->fetch()){
 	
-		print "$eventid is happening right now \n";
+		#print "$eventid is happening right now \n";
 	
 		#If an event does not have an assigned entity then assign it one
 		$assignedentityid="";
 		
 		$assignedquery = "select entity from entity_status es where es.data @> '\"assigned\"=>\"t\"' AND es.data @> '\"event_id\"=>\"$eventid\"' limit 1";		
-		print "finding assigned unit: $assignedquery \n";
+		#print "finding assigned unit: $assignedquery \n";
 								  
 		$assignedquery_handle = $srdb->prepare($assignedquery);
 		$assignedquery_handle->execute();
@@ -54,10 +57,11 @@ while(1){
 			$entityquery_handle->bind_columns(undef, \$entityid, \$distancetoevent, \$entitylocation, \$eventlocation);
 			$entityquery_handle->fetch();		
 			
-			print "$entityquery \n";
-			print "insert into entity_status (entity, data, data_begin) values ($entityid, hstore(ARRAY[['event_id','$eventid'], ['assigned','t'], ['enroute','f'], ['onscene','f']]), now() ) \n";
-			
-			
+			#print "$entityquery \n";
+			print "			Assigning $entityid \n";
+			#Close the old status where assigned=f
+			my $rows = $srdb->do("update  entity_status set data_end=now() where data @> '\"assigned\"=>\"f\"' and entity=$entityid and has_end='f'");
+						   #print "insert into entity_status (entity, data, data_begin) values ($entityid, hstore(ARRAY[['event_id','$eventid'], ['assigned','t'], ['enroute','f'], ['onscene','f']]), now() ) \n";
 			#assign the entity to that event
 			my $rows = $srdb->do("insert into entity_status (entity, data, data_begin) values ($entityid, hstore(ARRAY[['event_id','$eventid'], ['assigned','t'], ['enroute','f'], ['onscene','f']]), now() )");
 	
@@ -65,7 +69,7 @@ while(1){
 			#find the closest gid to entity and the closest to the event -- use source (not sure if this is right, but using gid sometimes gave errors)
 			$startgidquery = "select source, st_distance(geom, '$entitylocation') from tigerroads order by st_distance(geom, '$entitylocation')  limit 1";	
 			
-			print "$startgidquery \n";
+			#print "$startgidquery \n";
 										  
 			$startgidquery_handle = $adb->prepare($startgidquery);
 			$startgidquery_handle->execute();
@@ -74,7 +78,7 @@ while(1){
 	
 			#find the closest gid to entity and the closest to the event -- use target (not sure if this is right)
 			$endgidquery = "select target, st_distance(geom, '$eventlocation') from tigerroads order by st_distance(geom, '$eventlocation')  limit 1";		
-			print "$endgidquery \n";
+			#print "$endgidquery \n";
 			$endgidquery_handle = $adb->prepare($endgidquery);
 			$endgidquery_handle->execute();
 			$endgidquery_handle->bind_columns(undef, \$endgid, \$ignorethis);
@@ -82,11 +86,11 @@ while(1){
 	
 	
 			#Route the entity to the event and stick that route in srmap
-		
+			$routetoevent="";
 			
 			#$routequery = "SELECT st_force_3d(st_makeline(tigerroads.geom)) FROM (select * from shortest_path('SELECT gid as id, source::integer,target::integer,length as cost FROM tigerroads', $startgid, $endgid, false, false)) a, tigerroads where a.edge_id= tigerroads.gid";								  
 			$routequery = "SELECT st_force_3d(st_makeline(the_geom)) FROM calc_route('tigerroads', $startgid, $endgid) AS (start_id int, end_id int, id int, gid int, the_geom geometry)";
-			print "$routequery \n";
+			#print "$routequery \n";
 		
 			$routequery_handle = $adb->prepare($routequery);
 			$routequery_handle->execute();
@@ -94,24 +98,68 @@ while(1){
 			$routequery_handle->fetch();
 		
 			
-			print "The route is $routetoevent \n";
+			#print "The route is $routetoevent \n";
 			
-			
-			my $rows = $srdb->do("insert into srmap (group_id, geometry, data) values(2015, '$routetoevent', hstore(ARRAY[['entity','$entityid']]))");
+			if($routetoevent != ""){		
+				my $rows = $srdb->do("insert into srmap (group_id, geometry, data) values(2015, '$routetoevent', hstore(ARRAY[['entity','$entityid'], ['event','$eventid']])) \n");
+			#	print "insert into srmap (group_id, geometry, data) values(2015, '$routetoevent', hstore(ARRAY[['entity','$entityid'], ['event','$eventid']]))";
+				print "$entityid is going to event $eventid and it worked ($rows)\n";
+			} else {
+				print "			###Null routequery: $routequery \n";
+			}
+	
 		} else {
 			$entityid="";
-			$onscenequery = "select entity from entity_status where data @> '\"event_id\"=>\"$eventid\"' AND data @> '\"onscene\"=>\"t\"' AND has_end='f' limit 1";	
+			$onscene=="";
+			$enroute=="";
 			
-			print "$onscenequery \n";
-										  
-			$onscenequery_handle = $adb->prepare($onscenequery);
+			#Find out if the unit is enroute or on scene or not
+			$onscenequery = "select entity, data->'onscene' as onscene, data->'enroute' as enroute from entity_status where data @> '\"event_id\"=>\"$eventid\"' AND (data @> '\"onscene\"=>\"t\"' OR data @> '\"onscene\"=>\"f\"')  AND (data @> '\"enroute\"=>\"t\"' OR data @> '\"enroute\"=>\"f\"') AND has_end='f' limit 1";											  
+			$onscenequery_handle = $srdb->prepare($onscenequery);
 			$onscenequery_handle->execute();
-			$onscenequery_handle->bind_columns(undef, \$entityid);
+			$onscenequery_handle->bind_columns(undef, \$entityid, \$onscene, \$enroute);
 			$onscenequery_handle->fetch();
 			
+			#If the result is not NULL
 			if($entityid!=""){
-				my $rows = $srdb->do("DELETE FROM srmap where data @> '\"entity\"=>\"$entityid\"' AND group_id=2015" );
+				
+				if($onscene eq "t"){
+					print "Unit $entityid on scene \n";
+					#Delete the route from the map
+					my $rows = $srdb->do("DELETE FROM srmap where data @> '\"entity\"=>\"$entityid\"' AND group_id=2015" );
+					#Update the event: unit on scene:
+					my $rows = $srdb->do("UPDATE event set data = data || hstore('cfs_body', data->'cfs_body' || 'Unit on scene . . .') where id=$eventid AND has_end='f' ");
+					
+					
+					#If the unit is on scene then wait some random amount of time (or if (rand()>0.9) ...) to set the final disposition
+					#add final disposition, time etc.	
+					if(rand()>0){
+						my $finaldis=int(rand(8)) +91;				
+						my $rows = $srdb->do("UPDATE event set data = data || '\"cfs_finaldis\"=>\"$finaldis\"'::hstore, data_end=now() where id=$eventid");
+						
+						#Once there is a finaldis unassign the entity and take it off the map
+						my $rows = $srdb->do("update entity_status set data_end=now() where data @> '\"event_id\"=>\"$eventid\"' AND data @> '\"onscene\"=>\"t\"' AND has_end='f'");
+					
+						#Put it back into the unassigned category
+						my $rows = $srdb->do("insert into entity_status (entity, data, data_begin) values ($entityid, hstore(ARRAY[['inservice','t'],['assigned','f'], ['onscene','f'], ['enroute','f']]), now() )");
+					
+						my $rows = $srdb->do("update entity set group_id=0 where id=$entityid");
+					}				
+				}
+				
+				if($enroute eq "t"){
+					#Update the event: unit on scene:
+					my $rows = $srdb->do("UPDATE event set data = data || hstore('cfs_body', data->'cfs_body' || 'Unit en route  . . .') where id=$eventid AND has_end='f' AND data->'cfs_body' !~'en route' ");
+					if($rows>0){
+						print "$entityid is en route\n";
+					}
+				}					
+
+						
 			}
+			
+
+
 			
 		}
 		
@@ -122,46 +170,5 @@ while(1){
 }
 
 
-sub checkForNewEvents {
-	my ( $self ) = @_;
-	my @tmp = $self->generateUpdates();
-	$self->{updatenum}++;
-	if($self->{updatenum} - 1  >= @tmp){
-		my $tmpnum = $self->{updatenum} -1;
-		return "Update $tmpnum . . .";
-	} else {
-		return $tmp[$self->{updatenum}-1];
-	}
-
-}
-
-sub findClosestAvailableUnit {
-	my($eventid) = @_;
-	
-	
-	#Select all events
-	$select = "select es.entity, st_distance(l.geometry, l2.geometry) from event ev, entity_status es, location l, (select geometry from location, event where event.id='$eventid' AND event.location=location.id) l2  where ev.id='$eventid' AND es.location=l.id AND es.has_end='f' AND es.data @> '\"assigned\"=>\"f\"' AND es.data @> '\"inservice\"=>\"t\"' order by st_distance(l.geometry, l2.geometry) limit 1";
-	print "$select \n";
-	$select_handle = $srdb->prepare($select);
-	$select_handle->execute();
-	$select_handle->bind_columns(undef, \$unitid, \$distanceaway);
-	$select_handle->fetch();
-		print "Only $distanceaway degrees away\n";
-	return $unitid;
-	
-}
-
-sub getRoute {
-	my ( $self ) = @_;
-	my @tmp = $self->generateUpdates();
-	$self->{updatenum}++;
-	if($self->{updatenum} - 1  >= @tmp){
-		my $tmpnum = $self->{updatenum} -1;
-		return "Update $tmpnum . . .";
-	} else {
-		return $tmp[$self->{updatenum}-1];
-	}
-
-}
 
 
