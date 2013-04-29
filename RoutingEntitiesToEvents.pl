@@ -56,21 +56,9 @@ while(1){
 			$entityquery_handle->execute();
 			$entityquery_handle->bind_columns(undef, \$entityid, \$distancetoevent, \$entitylocation, \$eventlocation);
 			$entityquery_handle->fetch();		
-			
-			#print "$entityquery \n";
-			print "			Assigning $entityid \n";
-			#Close the old status where assigned=f
-			my $rows = $srdb->do("update  entity_status set data_end=now() where data @> '\"assigned\"=>\"f\"' and entity=$entityid and has_end='f'");
-						   #print "insert into entity_status (entity, data, data_begin) values ($entityid, hstore(ARRAY[['event_id','$eventid'], ['assigned','t'], ['enroute','f'], ['onscene','f']]), now() ) \n";
-			#assign the entity to that event
-			my $rows = $srdb->do("insert into entity_status (entity, data, data_begin) values ($entityid, hstore(ARRAY[['event_id','$eventid'], ['assigned','t'], ['enroute','f'], ['onscene','f']]), now() )");
-	
-	 
+				 
 			#find the closest gid to entity and the closest to the event -- use source (not sure if this is right, but using gid sometimes gave errors)
-			$startgidquery = "select source, st_distance(geom, '$entitylocation') from tigerroads order by st_distance(geom, '$entitylocation')  limit 1";	
-			
-			#print "$startgidquery \n";
-										  
+			$startgidquery = "select source, st_distance(geom, '$entitylocation') from tigerroads order by st_distance(geom, '$entitylocation')  limit 1";							  
 			$startgidquery_handle = $adb->prepare($startgidquery);
 			$startgidquery_handle->execute();
 			$startgidquery_handle->bind_columns(undef, \$startgid, \$ignorethis);
@@ -78,36 +66,39 @@ while(1){
 	
 			#find the closest gid to entity and the closest to the event -- use target (not sure if this is right)
 			$endgidquery = "select target, st_distance(geom, '$eventlocation') from tigerroads order by st_distance(geom, '$eventlocation')  limit 1";		
-			#print "$endgidquery \n";
 			$endgidquery_handle = $adb->prepare($endgidquery);
 			$endgidquery_handle->execute();
 			$endgidquery_handle->bind_columns(undef, \$endgid, \$ignorethis);
 			$endgidquery_handle->fetch();
 	
-	
 			#Route the entity to the event and stick that route in srmap
 			$routetoevent="";
 			
-			#$routequery = "SELECT st_force_3d(st_makeline(tigerroads.geom)) FROM (select * from shortest_path('SELECT gid as id, source::integer,target::integer,length as cost FROM tigerroads', $startgid, $endgid, false, false)) a, tigerroads where a.edge_id= tigerroads.gid";								  
 			$routequery = "SELECT st_force_3d(st_makeline(the_geom)) FROM calc_route('tigerroads', $startgid, $endgid) AS (start_id int, end_id int, id int, gid int, the_geom geometry)";
-			#print "$routequery \n";
-		
 			$routequery_handle = $adb->prepare($routequery);
 			$routequery_handle->execute();
 			$routequery_handle->bind_columns(undef, \$routetoevent);
 			$routequery_handle->fetch();
-		
-			
-			#print "The route is $routetoevent \n";
 			
 			if($routetoevent != ""){		
+				print "			Assigning $entityid \n";
+				#Close the old status where assigned=f
+				my $rows = $srdb->do("update  entity_status set data_end=now() where data @> '\"assigned\"=>\"f\"' and entity=$entityid and has_end='f'");
+				#assign the entity to that event
+				my $rows = $srdb->do("insert into entity_status (entity, data, data_begin) values ($entityid, hstore(ARRAY[['event_id','$eventid'], ['assigned','t'], ['enroute','f'], ['onscene','f']]), now() )");
+	
 				my $rows = $srdb->do("insert into srmap (group_id, geometry, data) values(2015, '$routetoevent', hstore(ARRAY[['entity','$entityid'], ['event','$eventid']])) \n");
-			#	print "insert into srmap (group_id, geometry, data) values(2015, '$routetoevent', hstore(ARRAY[['entity','$entityid'], ['event','$eventid']]))";
 				print "$entityid is going to event $eventid and it worked ($rows)\n";
 			} else {
 				print "			###Null routequery: $routequery \n";
+				
+					#Pretend this was just a false alarm, 
+					my $rows = $srdb->do("UPDATE event set data = data || hstore('cfs_body', data->'cfs_body' || 'FALSE ALARM  . . .') where id=$eventid AND has_end='f'");
+					#End the event
+					my $rows = $srdb->do("UPDATE event set data = data || '\"cfs_finaldis\"=>\"00\"'::hstore, data_end=now() where id=$eventid");
+					
 			}
-	
+
 		} else {
 			$entityid="";
 			$onscene=="";
@@ -143,7 +134,14 @@ while(1){
 						#Put it back into the unassigned category
 						my $rows = $srdb->do("insert into entity_status (entity, data, data_begin) values ($entityid, hstore(ARRAY[['inservice','t'],['assigned','f'], ['onscene','f'], ['enroute','f']]), now() )");
 					
-						my $rows = $srdb->do("update entity set group_id=0 where id=$entityid");
+						#Update the location status - Insert a new one with the same location
+						my $rows = $srdb->do("insert into entity_status (entity, data) values ($entityid, hstore(ARRAY[['heading','0'],['assigned','f'], ['routeid','']]))");
+						#Set the old one to end
+						my $rows = $srdb->do("update entity_status set data_end=now() where entity='$entityid' and has_end='f' and data @> '\"assigned\"=>\"t\"' ");
+										
+					
+						#This is dealt with by a symbolizer rule instead now
+						#my $rows = $srdb->do("update entity set group_id=0 where id=$entityid");
 					}				
 				}
 				

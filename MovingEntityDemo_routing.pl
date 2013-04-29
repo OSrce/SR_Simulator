@@ -77,7 +77,7 @@ $current=0;
 		#Insert a baseline status 
 		my $rows = $srdb->do("insert into entity_status (entity, data, data_begin) values ($entity_list[$i], hstore(ARRAY[['inservice','t'],['assigned','f'], ['onscene','f'], ['enroute','f']]), now() )");
 	
-		$insertstatus = "insert into entity_status (entity, location, data, data_begin) values ($entity_list[$i], $locid, hstore(ARRAY[['heading','$heading'], ['routeid','']]), now() ) returning id, entity";
+		$insertstatus = "insert into entity_status (entity, location, data, data_begin) values ($entity_list[$i], $locid, hstore(ARRAY[['heading','$heading'], ['routeid',''], ['assigned','t']]), now() ) returning id, entity";
 
 		$insertstatus_handle = $srdb->prepare($insertstatus);
 		$insertstatus_handle->execute();
@@ -168,7 +168,7 @@ $current=0;
 					
 					$pct_along_route_list[$i] = 1;
 					#update the table so that "onscene" is true
-					my $rows = $srdb->do("insert into entity_status (entity, location, data, data_begin) values ($entity_list[$i], $locid, hstore(ARRAY[['heading','$heading'], ['routeid','$routeid']]), now() ) returning id");
+					my $rows = $srdb->do("insert into entity_status (entity, location, data, data_begin) values ($entity_list[$i], $locid, hstore(ARRAY[['heading','$heading'], ['routeid','$routeid'], ['assigned','t']]), now() ) returning id");
 					
 					#update the old status
 					#my $rows = $srdb->do("update entity_status set data_end=now() where data @> '\"event_id\"=>\"$eventid\"' AND data @> '\"onscene\"=>\"f\"' AND entity=$entity_list[$i] AND has_end='f'");
@@ -241,7 +241,7 @@ $current=0;
 						my $rows = $srdb->do("UPDATE entity_status set data_end=now() where entity=$entity_list[$i] AND data ? 'heading' AND data ? 'routeid' AND has_end='f'" );
 					
 						#insert new status
-						$insertstatus = "insert into entity_status (entity, location, data, data_begin) values ($entity_list[$i], $locid, hstore(ARRAY[['heading','$heading'], ['routeid','$routeid']]), now() ) returning id";
+						$insertstatus = "insert into entity_status (entity, location, data, data_begin) values ($entity_list[$i], $locid, hstore(ARRAY[['heading','$heading'], ['routeid','$routeid'], ['assigned','t']]), now() ) returning id";
 						$insertstatus_handle = $srdb->prepare($insertstatus);
 						$insertstatus_handle->execute();
 						#get the returned status id
